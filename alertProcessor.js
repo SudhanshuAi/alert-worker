@@ -131,7 +131,7 @@ const alertJobProcessor = async (job) => {
                 logDetails = { value: newData.value, threshold: threshold, operator: operator };
 
                 if (triggered) {
-                    await sendNotificationToSlack({
+                    await sendMessageWithBotToken({
                         name: ruleName, id: currentRule.id, currentValue: newData.value,
                         operator: operator, threshold: threshold,
                     });
