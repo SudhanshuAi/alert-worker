@@ -5,8 +5,8 @@ const { Worker } = require('bullmq');
 const { createClient } = require('@supabase/supabase-js');
 const { Pool } = require('pg');
 const { Redis } = require('ioredis');
-// const { sendMessageWithBotToken } = require('./slackWebApiNotifier');
-const { sendNotificationToSlack } = require('./sendSlackNotification');
+const { sendMessageWithBotToken } = require('./slackWebApiNotifier');
+// const { sendNotificationToSlack } = require('./sendSlackNotification');
 
 // --- Client Initializations ---
 const redisConnection = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });

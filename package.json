@@ -4,7 +4,7 @@
   "main": "alertProcessor.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node -r dotenv/config alertProcessor.js"
+    "start": "dotenv -e .env -- node alertProcessor.js"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +15,7 @@
     "@supabase/supabase-js": "^2.56.0",
     "bullmq": "^5.58.2",
     "dotenv": "^17.2.1",
+    "dotenv-cli": "^10.0.0",
     "ioredis": "^5.7.0",
     "pg": "^8.16.3"
   }
