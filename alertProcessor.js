@@ -1,40 +1,35 @@
 // workers/alertProcessor.js
-// FINAL CORRECTED VERSION
+// FINAL UNIFIED VERSION FOR ALERTS AND REPORTS
+
+// --- Environment Variable Loading (CRITICAL) ---
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+// --- End of Loading ---
 
 const { Worker } = require('bullmq');
 const { createClient } = require('@supabase/supabase-js');
 const { Pool } = require('pg');
 const { Redis } = require('ioredis');
 const { sendMessageWithBotToken } = require('./slackWebApiNotifier');
-// const { sendNotificationToSlack } = require('./sendSlackNotification');
 
 // --- Client Initializations ---
 const redisConnection = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
 const QUEUE_NAME = 'alert-queue';
 
-// --- Helper Functions (Mirrors the logic from your /api/executequery route) ---
-
-// This function now returns a complete PoolConfig object, not just a string.
+// --- Helper Functions (No changes needed here) ---
 function getDatabaseConfig(connectionData) {
-    // *** THIS IS THE CRITICAL FIX ***
-    // This function now robustly handles both pre-parsed objects and JSON strings.
-    const config = typeof connectionData === 'string'
-        ? JSON.parse(connectionData)
-        : connectionData;
-    // *** END OF FIX ***
-
+    const config = typeof connectionData === 'string' ? JSON.parse(connectionData) : connectionData;
     const poolConfig = {
         host: config.host,
         database: config.database,
         user: config.username || config.user,
         port: parseInt(config.port, 10),
         password: config.password,
-        ssl: { rejectUnauthorized: false } // Always force SSL
+        ssl: { rejectUnauthorized: false }
     };
     return poolConfig;
 }
 
-// This function now uses the full config object to create a Pool.
 async function getPollData(poolConfig, sql) {
     const pool = new Pool(poolConfig);
     const client = await pool.connect();
@@ -64,66 +59,84 @@ function evaluateCondition(value, condition, threshold) {
 
 // --- Main Worker Logic ---
 const alertJobProcessor = async (job) => {
-    // Create a NEW Supabase client for every job to guarantee a valid auth state.
-    const supabase = createClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL,
-        process.env.SUPABASE_SERVICE_ROLE_KEY,
-        { auth: { persistSession: false } }
-    );
+    // *** THIS IS THE CRITICAL FIX FOR THE REFERENCE ERRORS ***
+    // 1. Get the job type from job.name (e.g., 'report', 'metric').
+    const jobType = job.name; 
+    // 2. Get the entire payload from job.data.
+    const jobData = job.data;
+    const { ruleId, ruleType } = jobData; // For alerts, ruleType is also in the payload.
+    // *** END OF FIX ***
 
-    const { ruleId, ruleType } = job.data;
-    console.log(`[Worker] Processing job ${job.id} for ${ruleType} rule: ${ruleId}`);
-    let logStatus = 'failed', logDetails = {}, ruleOwnerId = null;
+    console.log(`[Worker] Processing '${jobType}' job ${job.id} for ID: ${ruleId}`);
+    
+    // --- REPORT TRIGGER LOGIC ---
+    if (jobType === 'report') {
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/report-trigger`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Worker-Secret': process.env.WORKER_SECRET_KEY
+                },
+                body: JSON.stringify({
+                    slug: jobData.slug,
+                    slackChannelId: jobData.slackChannelId,
+                }),
+            });
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(`Report trigger API failed: ${errorData.error || response.statusText}`);
+            }
+            console.log(`[Worker] Successfully triggered report for ID: ${ruleId}`);
+        } catch (error) {
+            console.error(`[Worker] ERROR triggering report for ID ${ruleId}:`, error.message);
+            throw error; // Mark job as failed in BullMQ
+        }
+    } 
+    // --- ALERT PROCESSING LOGIC (Unchanged and intact) ---
+    else if (jobType === 'metric' || jobType === 'custom_kpi') {
+        const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL,
+            process.env.SUPABASE_SERVICE_ROLE_KEY,
+            { auth: { persistSession: false } }
+        );
+        let logStatus = 'failed', logDetails = {}, ruleOwnerId = null;
 
-    try {
-        if (ruleType === 'metric' || ruleType === 'custom_kpi') {
-            let rule, metric, kpi; // Declare variables
+        try {
+            let connectionData, sqlQuery, ruleName, operator, threshold, currentRule, isActive;
 
             if (ruleType === 'metric') {
-                ({ data: rule, error: fetchError } = await supabase.from('autonomis_user_metric_rule_table').select('*').eq('id', ruleId).single());
+                const { data: rule, error: fetchError } = await supabase.from('autonomis_user_metric_rule_table').select('*').eq('id', ruleId).single();
                 if (fetchError || !rule) throw new Error(`Metric Rule ${ruleId} not found.`);
-                ruleOwnerId = rule.user_id;
+                ruleOwnerId = rule.user_id; currentRule = rule; isActive = rule.isActive;
 
-                ({ data: metric, error: dbConfigError } = await supabase.from('autonomis_user_metrics_table').select('name, sql, autonomis_user_notebook(*, autonomis_user_database(*))').eq('id', rule.metric_table_id).single());
-                if (dbConfigError || !metric.autonomis_user_notebook?.autonomis_user_database) throw new Error(`Data config for rule ${ruleId} is incomplete.`);
+                if (isActive) {
+                    const { data: metric, error: dbConfigError } = await supabase.from('autonomis_user_metrics_table').select('name, sql, autonomis_user_notebook(*, autonomis_user_database(*))').eq('id', rule.metric_table_id).single();
+                    if (dbConfigError || !metric?.autonomis_user_notebook?.autonomis_user_database) throw new Error(`Data config for Metric Rule ${ruleId} is incomplete.`);
+                    connectionData = metric.autonomis_user_notebook.autonomis_user_database.connection_string;
+                    sqlQuery = metric.sql; ruleName = metric.name || `Metric Rule ${rule.id}`;
+                    operator = rule.operator; threshold = rule.value;
+                }
             } else { // custom_kpi
-                ({ data: kpi, error: kpiError } = await supabase.from('autonomis_custom_kpi_alerts').select('*').eq('id', ruleId).single());
+                const { data: kpi, error: kpiError } = await supabase.from('autonomis_custom_kpi_alerts').select('*').eq('id', ruleId).single();
                 if (kpiError || !kpi) throw new Error(`Custom KPI Rule ${ruleId} not found.`);
-                ruleOwnerId = kpi.user_id;
-            }
+                ruleOwnerId = kpi.user_id; currentRule = kpi; isActive = kpi.is_active;
 
-            const currentRule = rule || kpi;
-            const isActive = ruleType === 'metric' ? currentRule.isActive : currentRule.is_active;
+                if (isActive) {
+                    const { data: db, error: dbError } = await supabase.from('autonomis_user_database').select('connection_string').eq('id', kpi.database_id).single();
+                    if (dbError || !db) throw new Error(`Database connection for KPI ${ruleId} not found.`);
+                    connectionData = db.connection_string;
+                    sqlQuery = kpi.sql; ruleName = kpi.name;
+                    operator = kpi.condition_operator; threshold = kpi.threshold_value;
+                }
+            }
 
             if (!isActive) {
                 logStatus = 'success';
                 logDetails = { message: 'Rule is inactive, skipped.' };
             } else {
-                let connectionStringJSON, sqlQuery, ruleName, operator, threshold;
-                
-                if (ruleType === 'metric') {
-                    connectionStringJSON =  metric.autonomis_user_notebook.autonomis_user_database.connection_string;
-                    sqlQuery = metric.sql;
-                    ruleName = metric.name || `Metric Rule ${rule.id}`;
-                    operator = rule.operator;
-                    threshold = rule.value;
-                } else { // custom_kpi
-                    const { data: db, error: dbError } = await supabase.from('autonomis_user_database').select('connection_string').eq('id', kpi.database_id).single();
-                    if (dbError || !db) throw new Error(`Database connection for KPI ${ruleId} not found.`);
-                    connectionStringJSON = db.connection_string;
-                    sqlQuery = kpi.sql;
-                    ruleName = kpi.name;
-                    operator = kpi.condition_operator;
-                    threshold = kpi.threshold_value;
-                }
-
-                // *** THIS IS THE NEW, CORRECTED FLOW ***
-                // 1. Get the full config object.
-                const dbPoolConfig = getDatabaseConfig(connectionStringJSON);
-                // 2. Pass the config object to get the data.
+                const dbPoolConfig = getDatabaseConfig(connectionData);
                 const newData = await getPollData(dbPoolConfig, sqlQuery);
-                // *** END OF NEW FLOW ***
-                
                 const triggered = evaluateCondition(newData.value, operator, threshold);
                 logStatus = triggered ? 'triggered' : 'success';
                 logDetails = { value: newData.value, threshold: threshold, operator: operator };
@@ -133,29 +146,30 @@ const alertJobProcessor = async (job) => {
                         name: ruleName, id: currentRule.id, currentValue: newData.value,
                         operator: operator, threshold: threshold,
                     });
+                } else {
+                    console.log(`[Worker] Rule ${ruleId} completed successfully but was not triggered.`);
                 }
             }
-        } else {
-            throw new Error(`Unknown ruleType received: ${ruleType}`);
+        } catch (error) {
+            logStatus = 'failed';
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logDetails = { error: errorMessage };
+            console.error(`[Worker] ERROR processing alert job ${job.id}:`, errorMessage);
         }
-    } catch (error) {
-        logStatus = 'failed';
-        logDetails = { error: error.message };
-        console.error(`[Worker] ERROR processing job ${job.id}:`, error.message);
-    }
-    
-    if (ruleOwnerId) {
-        const { error: insertError } = await supabase.from('alert_history_logs').insert({
-            rule_id: ruleId, status: logStatus, details: logDetails, user_id: ruleOwnerId
-        });
-        if (insertError) {
-            console.error(`[Worker] FATAL: Failed to insert log into database!`, insertError);
-        }
-    }
 
-    if (logStatus === 'failed') throw new Error(logDetails.error);
+        if (ruleOwnerId) {
+            await supabase.from('alert_history_logs').insert({
+                rule_id: ruleId, status: logStatus, details: logDetails, user_id: ruleOwnerId
+            });
+        }
+
+        if (logStatus === 'failed') throw new Error(logDetails.error);
+    } 
+    else {
+        console.warn(`[Worker] Unknown job name received: ${jobType}`);
+    }
 };
 
 // --- Start the Worker ---
 new Worker(QUEUE_NAME, alertJobProcessor, { connection: redisConnection });
-console.log('[Worker] Worker started in JS mode. Listening for jobs from remote Redis...');
+console.log('[Worker] Worker started in JS mode. Listening for all job types...');
