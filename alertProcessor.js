@@ -25,13 +25,9 @@ function getDatabaseConfig(connectionString) {
         password: config.password,
     };
 
-    // Explicitly handle SSL based on the stored config, defaulting to secure.
-    if (config.ssl === false) {
-        poolConfig.ssl = false;
-    } else {
-        // For Neon, Supabase, and other cloud DBs, this is the required setting.
-        poolConfig.ssl = { rejectUnauthorized: false };
-    }
+    // attempts a secure connection, which is what Neon/Supabase requires.
+    poolConfig.ssl = { rejectUnauthorized: false };
+    // *** END OF FIX ***
     
     return poolConfig;
 }
