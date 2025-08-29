@@ -5,8 +5,8 @@ const { Worker } = require('bullmq');
 const { createClient } = require('@supabase/supabase-js');
 const { Pool } = require('pg');
 const { Redis } = require('ioredis');
-const { sendMessageWithBotToken } = require('./slackWebApiNotifier');
-// const { sendNotificationToSlack } = require('./sendSlackNotification');
+// const { sendMessageWithBotToken } = require('./slackWebApiNotifier');
+const { sendNotificationToSlack } = require('./sendSlackNotification');
 
 // --- Client Initializations ---
 const redisConnection = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
@@ -15,20 +15,22 @@ const QUEUE_NAME = 'alert-queue';
 // --- Helper Functions (Mirrors the logic from your /api/executequery route) ---
 
 // This function now returns a complete PoolConfig object, not just a string.
-function getDatabaseConfig(connectionString) {
-    const config = JSON.parse(connectionString);
+function getDatabaseConfig(connectionData) {
+    // *** THIS IS THE CRITICAL FIX ***
+    // This function now robustly handles both pre-parsed objects and JSON strings.
+    const config = typeof connectionData === 'string'
+        ? JSON.parse(connectionData)
+        : connectionData;
+    // *** END OF FIX ***
+
     const poolConfig = {
         host: config.host,
         database: config.database,
-        user: config.username || config.user, // Handle both username/user keys
+        user: config.username || config.user,
         port: parseInt(config.port, 10),
         password: config.password,
+        ssl: { rejectUnauthorized: false } // Always force SSL
     };
-
-    // attempts a secure connection, which is what Neon/Supabase requires.
-    poolConfig.ssl = { rejectUnauthorized: false };
-    // *** END OF FIX ***
-    
     return poolConfig;
 }
 
@@ -127,7 +129,7 @@ const alertJobProcessor = async (job) => {
                 logDetails = { value: newData.value, threshold: threshold, operator: operator };
 
                 if (triggered) {
-                    await sendMessageWithBotToken({
+                    await sendNotificationToSlack({
                         name: ruleName, id: currentRule.id, currentValue: newData.value,
                         operator: operator, threshold: threshold,
                     });
