@@ -104,7 +104,7 @@ const alertJobProcessor = async (job) => {
                 let connectionStringJSON, sqlQuery, ruleName, operator, threshold;
                 
                 if (ruleType === 'metric') {
-                    connectionStringJSON = JSON.stringify(metric.autonomis_user_notebook.autonomis_user_database.connection_string);
+                    connectionStringJSON =  metric.autonomis_user_notebook.autonomis_user_database.connection_string;
                     sqlQuery = metric.sql;
                     ruleName = metric.name || `Metric Rule ${rule.id}`;
                     operator = rule.operator;
