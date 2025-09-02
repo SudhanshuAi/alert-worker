@@ -1,9 +1,9 @@
 // workers/alertProcessor.js
-// FINAL UNIFIED VERSION FOR ALERTS AND REPORTS
+// FINAL CORRECTED VERSION
 
-// --- Environment Variable Loading (CRITICAL) ---
+// --- Environment Variable Loading ---
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+require('dotenv').config({ path: path.resolve(__dirname, '../.env.local') });
 // --- End of Loading ---
 
 const { Worker } = require('bullmq');
@@ -13,7 +13,7 @@ const { Redis } = require('ioredis');
 const { sendMessageWithBotToken } = require('./slackWebApiNotifier');
 
 // --- Client Initializations ---
-const redisConnection = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: null });
+const redisConnection = new Redis(process.env.ALERT_URL, { maxRetriesPerRequest: null });
 const QUEUE_NAME = 'alert-queue';
 
 // --- Helper Functions (No changes needed here) ---
@@ -59,20 +59,19 @@ function evaluateCondition(value, condition, threshold) {
 
 // --- Main Worker Logic ---
 const alertJobProcessor = async (job) => {
-    // *** THIS IS THE CRITICAL FIX FOR THE REFERENCE ERRORS ***
-    // 1. Get the job type from job.name (e.g., 'report', 'metric').
-    const jobType = job.name; 
-    // 2. Get the entire payload from job.data.
+    const jobType = job.name;
     const jobData = job.data;
-    const { ruleId, ruleType } = jobData; // For alerts, ruleType is also in the payload.
-    // *** END OF FIX ***
+    const { jobId: ruleId, jobType: ruleType } = jobData;
 
     console.log(`[Worker] Processing '${jobType}' job ${job.id} for ID: ${ruleId}`);
     
     // --- REPORT TRIGGER LOGIC ---
     if (jobType === 'report') {
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/report-trigger`, {
+            // *** THIS IS THE CRITICAL FIX: "FIRE-AND-FORGET" ***
+            // We are REMOVING the 'await' and the 'const response ='.
+            // The worker will send the request and immediately continue, not waiting for a reply.
+            fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/report-trigger`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -83,14 +82,15 @@ const alertJobProcessor = async (job) => {
                     slackChannelId: jobData.slackChannelId,
                 }),
             });
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(`Report trigger API failed: ${errorData.error || response.statusText}`);
-            }
-            console.log(`[Worker] Successfully triggered report for ID: ${ruleId}`);
+            // *** END OF FIX ***
+
+            // We now log success immediately. The actual report generation happens in the background.
+            console.log(`[Worker] Successfully TRIGGERED report for ID: ${ruleId}. The report is now generating in the background.`);
+
         } catch (error) {
-            console.error(`[Worker] ERROR triggering report for ID ${ruleId}:`, error.message);
-            throw error; // Mark job as failed in BullMQ
+            // This will only catch immediate errors, like if the Next.js server is down.
+            console.error(`[Worker] ERROR sending trigger request for report ID ${ruleId}:`, error.message);
+            throw error; // Still mark the job as failed if the trigger fails
         }
     } 
     // --- ALERT PROCESSING LOGIC (Unchanged and intact) ---

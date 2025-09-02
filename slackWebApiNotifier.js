@@ -37,7 +37,7 @@ async function sendMessageWithBotToken(details) {
         {
             type: 'section',
             fields: [
-                { type: 'mrkdwn', text: `*Condition Met:*\n\`${details.currentValue} ${details.operator} ${details.threshold}\`` },
+                { type: 'mrkdwn', text: `*Condition Met:*\n*${details.currentValue} ${details.operator} ${details.threshold}*` },
                 { type: 'mrkdwn', text: `*Status:*\n🔥 Triggered` },
             ],
         },
