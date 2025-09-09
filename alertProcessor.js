@@ -43,7 +43,8 @@ const alertJobProcessor = async (job) => {
                 body: JSON.stringify({
                     slug: jobData.slug,
                     slackChannelId: jobData.slackChannelId,
-                    viewType: 'drilldown'
+                    viewType: 'drilldown',
+                    executionType: 'scheduled'
                 }),
             });
             // *** END OF FIX ***
