@@ -85,12 +85,12 @@ const alertJobProcessor = async (job) => {
             console.log(`[Worker] Successfully TRIGGERED metric alert for ID: ${ruleId}. Processing in the background.`);
 
             // Log the trigger attempt
-            await supabase.from('alert_history_logs').insert({
-                rule_id: ruleId,
-                status: 'triggered',
-                details: { message: 'Metric alert processing successfully initiated by worker.' },
-                user_id: jobData.userId || null
-            });
+            // await supabase.from('alert_history_logs').insert({
+            //     rule_id: ruleId,
+            //     status: 'triggered',
+            //     details: { message: 'Metric alert processing successfully initiated by worker.' },
+            //     user_id: jobData.userId || null
+            // });
 
         } catch (error) {
             console.error(`[Worker] ERROR sending trigger request for metric alert ID ${ruleId}:`, error.message);
@@ -116,12 +116,12 @@ const alertJobProcessor = async (job) => {
             console.log(`[Worker] Successfully TRIGGERED custom KPI alert for ID: ${ruleId}. Processing in the background.`);
 
             // Log the trigger attempt
-            await supabase.from('alert_history_logs').insert({
-                rule_id: ruleId,
-                status: 'triggered',
-                details: { message: 'Custom KPI alert processing successfully initiated by worker.' },
-                user_id: jobData.userId || null
-            });
+            // await supabase.from('alert_history_logs').insert({
+            //     rule_id: ruleId,
+            //     status: 'triggered',
+            //     details: { message: 'Custom KPI alert processing successfully initiated by worker.' },
+            //     user_id: jobData.userId || null
+            // });
 
         } catch (error) {
             console.error(`[Worker] ERROR sending trigger request for custom KPI alert ID ${ruleId}:`, error.message);
