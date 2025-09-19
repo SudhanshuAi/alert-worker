@@ -9,6 +9,8 @@ require('dotenv').config({ path: path.resolve(__dirname, '../.env.local') });
 const { Worker } = require('bullmq');
 const { createClient } = require('@supabase/supabase-js');
 const { Redis } = require('ioredis');
+const { v4: uuidv4 } = require('uuid');
+
 
 // --- Client Initializations ---
 const redisConnection = new Redis(process.env.ALERT_URL, { maxRetriesPerRequest: null });
@@ -30,10 +32,13 @@ const alertJobProcessor = async (job) => {
     
     // --- REPORT TRIGGER LOGIC ---
     if (jobType === 'report') {
+        // 1. Generate a unique run_id at the start of the job.
+        const run_id = uuidv4();
+        console.log(`[Worker] Generated unique run_id for report ${ruleId}: ${run_id}`);
+        
         try {
-            // *** THIS IS THE CRITICAL FIX: "FIRE-AND-FORGET" ***
-            // We are REMOVING the 'await' and the 'const response ='.
-            // The worker will send the request and immediately continue, not waiting for a reply.
+            // Fire-and-forget the trigger to your API route.
+            // 2. Pass the new run_id in the body so the API can use it.
             fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/report-trigger`, {
                 method: 'POST',
                 headers: {
@@ -45,25 +50,48 @@ const alertJobProcessor = async (job) => {
                     slackChannelId: jobData.slackChannelId,
                     viewType: jobData.viewType,
                     subViewType: jobData.subViewType,
-                    executionType: 'scheduled'
+                    executionType: 'scheduled',
+                    run_id: run_id // <-- Pass the unique ID
                 }),
             });
-            // *** END OF FIX ***
 
-            // We now log success immediately. The actual report generation happens in the background.
             console.log(`[Worker] Successfully TRIGGERED report for ID: ${ruleId}. The report is now generating in the background.`);
 
-            await supabase.from('autonomis_report_history_logs').insert({
-            report_id: ruleId,
-            status: 'triggered',
-            details: { message: 'Report generation successfully initiated by worker.' },
-            user_id: jobData.reportOwnerId || null 
-        });
+            // 3. Immediately log the "initiation" message to your history table.
+            // This is the log the user will see while the report is generating.
+            const { error: logError } = await supabase.from('autonomis_report_history_logs').insert({
+                report_id: ruleId,
+                status: 'triggered',
+                run_id: run_id, // <-- Store the unique ID
+                details: { 
+                    run_id: run_id,
+                    message: 'Report generation successfully initiated by worker.' 
+                },
+                user_id: jobData.reportOwnerId || null 
+            });
+
+            if (logError) {
+                // If logging fails, we should still continue, but log the error.
+                console.error(`[Worker] CRITICAL: Failed to insert initial history log for run_id ${run_id}.`, logError);
+            }
 
         } catch (error) {
-            // This will only catch immediate errors, like if the Next.js server is down.
+            // This will only catch errors from the initial 'fetch' call.
             console.error(`[Worker] ERROR sending trigger request for report ID ${ruleId}:`, error.message);
-            throw error; // Still mark the job as failed if the trigger fails
+            
+            // 4. If the trigger fails, log the failure with the same run_id for traceability.
+            const failureDetails = {
+                run_id: run_id,
+                error: `Worker failed to trigger API route: ${error.message}`
+            };
+            await supabase.from('autonomis_report_history_logs').insert({
+                report_id: ruleId,
+                status: 'failed',
+                run_id: run_id,
+                details: failureDetails,
+                user_id: jobData.reportOwnerId || null 
+            });
+            throw error; // Still mark the job as failed in BullMQ
         }
     } 
     // --- METRIC ALERT TRIGGER LOGIC ---
