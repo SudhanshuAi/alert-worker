@@ -157,6 +157,31 @@ const alertJobProcessor = async (job) => {
             throw error;
         }
     } 
+
+    // --- ALERT TRACKER TRIGGER LOGIC ---
+    else if (jobType === 'alert_tracker') {
+        try {
+            // Fire-and-forget alert tracker trigger
+            fetch(`${process.env.NEXT_PUBLIC_BASE_URL}/api/alert-trigger-tracker`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Worker-Secret': process.env.WORKER_SECRET_KEY
+                },
+                body: JSON.stringify({
+                    slug: ruleId, // For trackers, the ID is the slug
+                    executionType: 'scheduled',
+                    slackChannelId: jobData.slackChannelId // Pass the channel ID
+                }),
+            });
+
+            console.log(`[Worker] Successfully TRIGGERED alert tracker for ID: ${ruleId}. Processing in the background.`);
+        } catch (error) {
+            console.error(`[Worker] ERROR sending trigger request for alert tracker ID ${ruleId}:`, error.message);
+            throw error;
+        }
+    } 
+    
     else {
         console.warn(`[Worker] Unknown job name received: ${jobType}`);
     }
